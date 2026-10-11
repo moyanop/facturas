@@ -114,6 +114,75 @@ export function isArcaAuthenticationError(
   return error instanceof ArcaAuthenticationError;
 }
 
+/** Fallo de la lectura estricta: metadatos acotados, sin cause ni diagnóstico remoto. */
+export class ArcaSalesPointsStrictError extends ArcaError {
+  override readonly name: string = "ArcaSalesPointsStrictError";
+  readonly service = "wsfe";
+  readonly operation = "FEParamGetPtosVenta";
+  readonly reason:
+    | "invalid_response"
+    | "service_error"
+    | "authentication_error"
+    | "transport_error"
+    | "soap_fault"
+    | "aborted"
+    | "unavailable";
+  readonly field?: string;
+  readonly issues: readonly { source: "error" | "event"; code: number }[];
+  readonly fieldState?: "absent" | "invalid" | "duplicate";
+  readonly originalCode?:
+    | "ARCA_AUTHENTICATION_ERROR"
+    | "ARCA_TRANSPORT_ERROR"
+    | "ARCA_SOAP_FAULT"
+    | "ARCA_INVALID_SOAP_RESPONSE";
+  readonly recovery?: Pick<
+    ArcaSalesPointsStrictError,
+    | "issues"
+    | "providerCode"
+    | "authenticationReason"
+    | "originService"
+    | "originOperation"
+  >;
+  readonly providerCode?: number;
+  readonly authenticationReason?: ArcaAuthenticationReason;
+  readonly originService?: "wsaa" | "wsfe";
+  readonly originOperation?: "loginCms" | "FEParamGetPtosVenta";
+  readonly statusCode?: number;
+  readonly attempts: number;
+
+  constructor(options: {
+    reason: ArcaSalesPointsStrictError["reason"];
+    field?: string;
+    issues?: ArcaSalesPointsStrictError["issues"];
+    fieldState?: ArcaSalesPointsStrictError["fieldState"];
+    originalCode?: ArcaSalesPointsStrictError["originalCode"];
+    recovery?: ArcaSalesPointsStrictError["recovery"];
+    providerCode?: number;
+    authenticationReason?: ArcaAuthenticationReason;
+    originService?: "wsaa" | "wsfe";
+    originOperation?: "loginCms" | "FEParamGetPtosVenta";
+    statusCode?: number;
+    attempts?: number;
+  }) {
+    super(
+      "La consulta estricta de puntos de venta WSFE no produjo una respuesta válida.",
+      "ARCA_SALES_POINTS_STRICT_ERROR"
+    );
+    this.reason = options.reason;
+    this.field = options.field;
+    this.issues = options.issues ?? [];
+    this.fieldState = options.fieldState;
+    this.originalCode = options.originalCode;
+    this.recovery = options.recovery;
+    this.providerCode = options.providerCode;
+    this.authenticationReason = options.authenticationReason;
+    this.originService = options.originService;
+    this.originOperation = options.originOperation;
+    this.statusCode = options.statusCode;
+    this.attempts = options.attempts ?? 0;
+  }
+}
+
 /** Thrown when an HTTP request to an ARCA endpoint fails at the transport level. */
 export class ArcaTransportError extends ArcaError {
   override readonly name: string = "ArcaTransportError";

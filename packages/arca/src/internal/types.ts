@@ -97,6 +97,8 @@ export type ArcaSoapExecutionOptions<TBody> = {
   operation: string;
   /** Overrides client-level retries for this operation. Use zero for fiscal authorization. */
   retries?: number;
+  /** Validador interno previo al parseo; no registra ni expone el XML. */
+  validateResponse?: (raw: string) => void;
   bodyElementName?: string;
   bodyElementNamespaceMode?: "default" | "prefix";
   body: TBody;

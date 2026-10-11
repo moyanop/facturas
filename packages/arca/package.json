@@ -1,6 +1,6 @@
 {
   "name": "facturas",
-  "version": "0.20.3",
+  "version": "0.20.3-moyan.1",
   "description": "SDK de TypeScript para facturación electrónica con ARCA / AFIP: facturas, notas de crédito y débito, y Padrón con una sola API.",
   "type": "module",
   "license": "Apache-2.0",
@@ -52,7 +52,7 @@
     "test": "vitest run --config vitest.config.ts",
     "test:coverage": "vitest run --config vitest.config.ts --coverage",
     "check": "ultracite check",
-    "check:exports": "pnpm build && node scripts/check-package-exports.mjs && tsc --project scripts/tsconfig.package-consumer.json --noEmit",
+    "check:exports": "pnpm build && node scripts/check-package-exports.mjs && node scripts/check-sales-points-strict.mjs && tsc --project scripts/tsconfig.package-consumer.json --noEmit",
     "fix": "ultracite fix"
   },
   "exports": {

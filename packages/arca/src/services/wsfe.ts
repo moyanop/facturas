@@ -30,6 +30,22 @@ import type {
   ArcaFiscalResultLevel,
   ArcaVoucherLookupResult,
 } from "./fiscal-evidence";
+import {
+  parseWsfeSalesPointsStrict,
+  sanitizeWsfeSalesPointsStrictError,
+  type WsfeSalesPointsStrictInput,
+  type WsfeSalesPointsStrictRecovery,
+  type WsfeSalesPointsStrictResult,
+} from "./wsfe-sales-points-strict";
+import { readWsfeSalesPointsStrictXml } from "./wsfe-sales-points-strict-xml";
+
+export type {
+  WsfeSalesPointStrict,
+  WsfeSalesPointsStrictInput,
+  WsfeSalesPointsStrictIssue,
+  WsfeSalesPointsStrictRecovery,
+  WsfeSalesPointsStrictResult,
+} from "./wsfe-sales-points-strict";
 
 /** Accepted public date inputs for WSFE request fields. */
 export type WsfeDateInput =
@@ -234,6 +250,10 @@ export type WsfeService = {
     representedTaxId?: number | string;
     forceRefresh?: boolean;
   }): Promise<WsfeSalesPoint[]>;
+  /** Valida la respuesta completa; no convierte errores WSFE (incluido 602) en []. */
+  getSalesPointsStrict(
+    input?: WsfeSalesPointsStrictInput
+  ): Promise<WsfeSalesPointsStrictResult>;
   /** Lists voucher types accepted by WSFE. */
   getVoucherTypes(input?: {
     representedTaxId?: number | string;
@@ -375,13 +395,17 @@ export function createWsfeService(
       abortSignal?: AbortSignal;
     },
     body: Record<string, unknown> = {},
-    retries?: number
+    retries?: number,
+    preserveEnvelope = false
   ) {
     const auth = await options.auth.login("wsfe", {
       representedTaxId: input.representedTaxId,
       forceRefresh: input.forceRefresh,
       abortSignal: input.abortSignal,
     });
+    if (preserveEnvelope) {
+      input.abortSignal?.throwIfAborted();
+    }
     const response = await options.soap.execute<
       Record<string, unknown>,
       Record<string, unknown>
@@ -389,6 +413,9 @@ export function createWsfeService(
       service: "wsfe",
       operation,
       ...(retries === undefined ? {} : { retries }),
+      ...(preserveEnvelope
+        ? { validateResponse: readWsfeSalesPointsStrictXml }
+        : {}),
       signal: input.abortSignal,
       body: {
         Auth: createWsfeAuth(
@@ -400,7 +427,9 @@ export function createWsfeService(
       },
     });
 
-    return unwrapWsfeOperationEnvelope(operation, response.result);
+    return preserveEnvelope
+      ? readWsfeSalesPointsStrictXml(response.raw)
+      : unwrapWsfeOperationEnvelope(operation, response.result);
   }
 
   function executeWsfeAuthenticatedOperation(
@@ -659,6 +688,61 @@ export function createWsfeService(
   return {
     issue,
     getNextVoucherNumber,
+    async getSalesPointsStrict(input = {}) {
+      let attempts = 0;
+      let recovery: WsfeSalesPointsStrictRecovery | undefined;
+      let forceRefresh = input.forceRefresh;
+      for (;;) {
+        try {
+          input.abortSignal?.throwIfAborted();
+          attempts++;
+          const envelope = await executeWsfeAuthenticatedRawOperation(
+            "FEParamGetPtosVenta",
+            { ...input, forceRefresh },
+            {},
+            0,
+            true
+          );
+          input.abortSignal?.throwIfAborted();
+          return {
+            ...parseWsfeSalesPointsStrict(envelope),
+            service: "wsfe",
+            operation: "FEParamGetPtosVenta",
+            representedTaxId: String(
+              input.representedTaxId ?? options.config.taxId
+            ),
+            environment: options.config.environment,
+            attempts,
+            authenticationRecovered: attempts > 1,
+            recovery,
+          };
+        } catch (cause) {
+          const error = sanitizeWsfeSalesPointsStrictError(
+            cause,
+            attempts,
+            input.abortSignal?.aborted === true,
+            recovery
+          );
+          const recover =
+            input.authenticationRecovery === true &&
+            options.config.retries !== 0 &&
+            forceRefresh !== true &&
+            attempts === 1 &&
+            error.reason === "authentication_error";
+          if (!recover) {
+            throw error;
+          }
+          forceRefresh = true;
+          recovery = {
+            issues: error.issues,
+            providerCode: error.providerCode,
+            authenticationReason: error.authenticationReason,
+            originService: error.originService,
+            originOperation: error.originOperation,
+          };
+        }
+      }
+    },
     async getSalesPoints({ representedTaxId, forceRefresh } = {}) {
       const operation = "FEParamGetPtosVenta";
       const result = await executeWithAuthenticationRecovery({

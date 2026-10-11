@@ -83,6 +83,7 @@ export function createSoapTransport(
           durationMs: Date.now() - startedAt,
         });
 
+        request.validateResponse?.(response.body);
         const parseContext = {
           service: request.service,
           operation: request.operation,
