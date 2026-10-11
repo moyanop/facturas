@@ -52,6 +52,19 @@ Los envelopes anidados no pueden tener `ResultGet`, `Errors` ni `Events`
 paralelos fuera de su resultado. Esas estructuras contradictorias se rechazan;
 no se descarta información para aceptar los puntos de venta internos.
 
+La validación también cubre las claves de cada resultado, colección, punto de
+venta y código/evento. `Errors` y `Events` sólo pueden estar en el resultado de
+la operación, no dentro de `ResultGet` ni de un PV. `xsi:nil` verdadero o inválido
+no acredita contenido; nil falso y declaraciones de namespaces son legítimos.
+Los elementos inesperados y el contenido anidado en campos escalares fallan
+cerrados, sin devolver una lista parcial.
+
+Si otra parte de la estructura falla, el diagnóstico conserva los códigos
+numéricos válidos encontrados, el campo inválido y `reason: invalid_response`.
+Un error 602 con un evento inválido no pierde el 602. Una respuesta mixta o
+estructuralmente inválida con 600/601 tampoco autoriza un refresh. Esos códigos
+no acreditan por sí solos revocación de autorización.
+
 El error contiene `code: ARCA_SALES_POINTS_STRICT_ERROR`, `reason`, campo y estado
 de validación cuando corresponden, códigos públicos, origen de autenticación,
 `originalCode` de errores SDK conocidos, status HTTP válido e intentos lógicos.

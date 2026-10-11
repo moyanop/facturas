@@ -10,6 +10,7 @@ import {
 } from "../errors";
 import { getSingleBodyEntry, parseSoapBody } from "../internal/xml";
 import { createWsfeService } from "../wsfe";
+import { parseWsfeSalesPointsStrict } from "./wsfe-sales-points-strict";
 
 const valid = { Nro: 1, EmisionTipo: "CAE", Bloqueado: "N", FchBaja: "" };
 const response = (points: unknown) => ({ ResultGet: { PtoVenta: points } });
@@ -485,5 +486,81 @@ describe("Validaciones adicionales y recuperación controlada", () => {
       { number: 1, emissionType: "CAE", blocked: false },
     ]);
     expect(h.logins).toEqual([false, true]);
+  });
+});
+
+describe("Review P1-A y P2: estructura completa y códigos", () => {
+  it.each([
+    { ...response(valid), FEParamGetPtosVentaResult: error(602) },
+    { ResultGet: { PtoVenta: valid, Errors: { Err: { Code: 602 } } } },
+    { ResultGet: { PtoVenta: valid, Events: { Evt: { Code: 39 } } } },
+    { ResultGet: { PtoVenta: valid, "@_nil": "true" } },
+    response({ ...valid, "@_xsi:nil": "true" }),
+    response({ ...valid, Extra: { Nro: 2 } }),
+    response({ ...valid, Bloqueado: { "#text": "N", Extra: "S" } }),
+  ])("rechaza información contradictoria sin devolver PV %j", (fixture) => {
+    expect(() => parseWsfeSalesPointsStrict(fixture)).toThrow(
+      ArcaSalesPointsStrictError
+    );
+    try {
+      parseWsfeSalesPointsStrict(fixture);
+    } catch (failure) {
+      expect(failure).toMatchObject({
+        reason: "invalid_response",
+        fieldState: "invalid",
+      });
+    }
+  });
+  it.each([602, 601, 600])(
+    "conserva %s aunque un evento posterior sea inválido",
+    (code) => {
+      try {
+        parseWsfeSalesPointsStrict({
+          ...error(code),
+          Events: { Evt: { Code: "INVALID", Msg: "SECRETO-REMOTO" } },
+        });
+        expect.fail("La respuesta debe fallar cerrada.");
+      } catch (failure) {
+        expect(failure).toMatchObject({
+          reason: "invalid_response",
+          field: "Events.Code",
+          fieldState: "invalid",
+          issues: [{ source: "error", code }],
+        });
+        expect(JSON.stringify(failure)).not.toContain("SECRETO-REMOTO");
+      }
+    }
+  );
+  it("preserva códigos válidos de entradas posteriores sin recuperar autenticación", async () => {
+    const h = harness(
+      [
+        {
+          Errors: { Err: [{ Code: "INVALID" }, { Code: 600 }, { Code: 602 }] },
+        },
+      ],
+      1
+    );
+    await expect(
+      h.service.getSalesPointsStrict({ authenticationRecovery: true })
+    ).rejects.toMatchObject({
+      reason: "invalid_response",
+      issues: [
+        { source: "error", code: 600 },
+        { source: "error", code: 602 },
+      ],
+      attempts: 1,
+    });
+    expect(h.logins).toEqual([false]);
+  });
+  it("acepta declaraciones XML y nil explícitamente falso", () => {
+    expect(
+      parseWsfeSalesPointsStrict({
+        "@_xmlns": "http://ar.gov.afip.dif.FEV1/",
+        ResultGet: {
+          "@_xsi:nil": "false",
+          PtoVenta: { ...valid, "@_nil": "0" },
+        },
+      }).points
+    ).toHaveLength(1);
   });
 });

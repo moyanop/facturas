@@ -70,24 +70,46 @@ function has(value: Record<string, unknown>, key: string): boolean {
   return Object.hasOwn(value, key);
 }
 
+/** Sólo tolera declaraciones XML y nil explícitamente falso, nunca contenido oculto. */
+function shape(value: unknown, keys: string[], field: string) {
+  const node = record(value, field);
+  for (const [key, nested] of Object.entries(node)) {
+    if (keys.includes(key)) {
+      continue;
+    }
+    if (/^@_xmlns(?::[\w.-]+)?$/.test(key) && typeof nested === "string") {
+      continue;
+    }
+    if (key === "@_nil" || key === "@_xsi:nil") {
+      if (nested !== "false" && nested !== "0") {
+        return invalid(`${field}.xsi:nil`);
+      }
+      continue;
+    }
+    if (key === "#text" && typeof nested === "string" && nested.trim() === "") {
+      continue;
+    }
+    return invalid(`${field}.structure`);
+  }
+  return node;
+}
+
+function scalar(value: unknown, field: string): unknown {
+  if (value !== null && typeof value === "object") {
+    const node = shape(value, ["#text"], field);
+    return node["#text"] ?? "";
+  }
+  return value;
+}
+
 function unwrap(value: unknown): Record<string, unknown> {
-  const envelope = record(value, "envelope");
   const responseKey = "FEParamGetPtosVentaResponse";
   const resultKey = "FEParamGetPtosVentaResult";
-  const allowed = new Set([
-    responseKey,
-    resultKey,
-    "ResultGet",
-    "Errors",
-    "Events",
-  ]);
-  if (
-    Object.keys(envelope).some(
-      (key) => !(allowed.has(key) || key.startsWith("@_xmlns"))
-    )
-  ) {
-    return invalid("envelope");
-  }
+  const envelope = shape(
+    value,
+    [responseKey, resultKey, "ResultGet", "Errors", "Events"],
+    "envelope"
+  );
   if (has(envelope, responseKey)) {
     if (
       has(envelope, resultKey) ||
@@ -97,14 +119,7 @@ function unwrap(value: unknown): Record<string, unknown> {
     ) {
       return invalid("envelope");
     }
-    const response = record(envelope[responseKey], "envelope");
-    if (
-      Object.keys(response).some(
-        (key) => key !== resultKey && !key.startsWith("@_xmlns")
-      )
-    ) {
-      return invalid("envelope");
-    }
+    const response = shape(envelope[responseKey], [resultKey], "envelope");
     return record(response[resultKey], "envelope");
   }
   if (has(envelope, resultKey)) {
@@ -144,19 +159,28 @@ function issues(
   if (!has(result, container) || result[container] === "") {
     return [];
   }
-  const group = record(result[container], container);
+  const group = shape(result[container], [key], container);
   if (!has(group, key)) {
     return invalid(container, "absent");
   }
   const entries = Array.isArray(group[key]) ? group[key] : [group[key]];
-  return Array.from(entries, (entry: unknown) => ({
-    source,
-    code: integer(
-      record(entry, container).Code,
-      `${container}.Code`,
-      2_147_483_647
-    ),
-  }));
+  return Array.from(entries, (entry: unknown) => {
+    const item = shape(entry, ["Code", "Msg"], `${container}.${key}`);
+    if (
+      has(item, "Msg") &&
+      typeof scalar(item.Msg, `${container}.Msg`) !== "string"
+    ) {
+      return invalid(`${container}.Msg`);
+    }
+    return {
+      source,
+      code: integer(
+        scalar(item.Code, `${container}.Code`),
+        `${container}.Code`,
+        2_147_483_647
+      ),
+    };
+  });
 }
 
 function deletion(
@@ -165,15 +189,16 @@ function deletion(
   if (!has(point, "FchBaja")) {
     return { kind: "absent" };
   }
-  if (point.FchBaja === "") {
+  const value = scalar(point.FchBaja, "FchBaja");
+  if (value === "") {
     return { kind: "empty" };
   }
-  if (typeof point.FchBaja !== "string" || !/^\d{8}$/.test(point.FchBaja)) {
+  if (typeof value !== "string" || !/^\d{8}$/.test(value)) {
     return invalid("FchBaja");
   }
-  const year = Number(point.FchBaja.slice(0, 4));
-  const month = Number(point.FchBaja.slice(4, 6));
-  const day = Number(point.FchBaja.slice(6, 8));
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(4, 6));
+  const day = Number(value.slice(6, 8));
   const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
   const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
   if (year < 1 || month < 1 || month > 12 || day < 1 || day > days[month - 1]) {
@@ -181,39 +206,57 @@ function deletion(
   }
   return {
     kind: "date",
-    date: `${point.FchBaja.slice(0, 4)}-${point.FchBaja.slice(4, 6)}-${point.FchBaja.slice(6, 8)}`,
+    date: `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`,
   };
 }
 
+function rejectErrors(
+  result: Record<string, unknown>,
+  errors: WsfeSalesPointsStrictIssue[],
+  events: WsfeSalesPointsStrictIssue[]
+) {
+  if (errors.length === 0) {
+    return;
+  }
+  const field = has(result, "ResultGet")
+    ? "ResultGet"
+    : events.length > 0
+      ? "Events"
+      : undefined;
+  // No se descarta ni una contradicción ni códigos secundarios (incluido 602).
+  const authentication = errors.every(
+    ({ code }) => code === 600 || code === 601
+  );
+  throw new ArcaSalesPointsStrictError({
+    reason:
+      field === undefined
+        ? authentication
+          ? "authentication_error"
+          : "service_error"
+        : "invalid_response",
+    issues: [...errors, ...events],
+    field,
+    fieldState: field === undefined ? undefined : "invalid",
+    providerCode: authentication ? errors[0].code : undefined,
+    authenticationReason: authentication
+      ? errors[0].code === 600
+        ? "invalid_token"
+        : "missing_relationship"
+      : undefined,
+  });
+}
+
 /** Valida antes del mapper permisivo; nunca devuelve parcialmente una lista inválida. */
-export function parseWsfeSalesPointsStrict(value: unknown) {
+function parseStrict(value: unknown) {
   const result = unwrap(value);
+  shape(result, ["ResultGet", "Errors", "Events"], "result");
   const errors = issues(result, "Errors", "Err", "error");
   const events = issues(result, "Events", "Evt", "event");
-  if (errors.length > 0) {
-    // No se descarta ni una contradicción ni códigos secundarios (incluido 602).
-    const authentication = errors.every(
-      ({ code }) => code === 600 || code === 601
-    );
-    throw new ArcaSalesPointsStrictError({
-      reason: has(result, "ResultGet")
-        ? "invalid_response"
-        : authentication
-          ? "authentication_error"
-          : "service_error",
-      issues: [...errors, ...events],
-      providerCode: authentication ? errors[0].code : undefined,
-      authenticationReason: authentication
-        ? errors[0].code === 600
-          ? "invalid_token"
-          : "missing_relationship"
-        : undefined,
-    });
-  }
+  rejectErrors(result, errors, events);
   if (!has(result, "ResultGet")) {
     return invalid("ResultGet", "absent");
   }
-  const group = record(result.ResultGet, "ResultGet");
+  const group = shape(result.ResultGet, ["PtoVenta"], "ResultGet");
   if (!has(group, "PtoVenta")) {
     return invalid("ResultGet.PtoVenta", "absent");
   }
@@ -224,27 +267,33 @@ export function parseWsfeSalesPointsStrict(value: unknown) {
   const points: WsfeSalesPointStrict[] = Array.from(
     entries,
     (entry: unknown) => {
-      const point = record(entry, "PtoVenta");
+      const point = shape(
+        entry,
+        ["Nro", "EmisionTipo", "Bloqueado", "FchBaja"],
+        "PtoVenta"
+      );
       for (const field of ["Nro", "EmisionTipo", "Bloqueado"]) {
         if (!has(point, field)) {
           return invalid(field, "absent");
         }
       }
-      const number = integer(point.Nro, "Nro", 99_998);
+      const number = integer(scalar(point.Nro, "Nro"), "Nro", 99_998);
       if (seen.has(number)) {
         return invalid("duplicate.Nro", "duplicate");
       }
       seen.add(number);
-      if (point.EmisionTipo !== "CAE" && point.EmisionTipo !== "CAEA") {
+      const emissionType = scalar(point.EmisionTipo, "EmisionTipo");
+      const blocked = scalar(point.Bloqueado, "Bloqueado");
+      if (emissionType !== "CAE" && emissionType !== "CAEA") {
         return invalid("EmisionTipo");
       }
-      if (point.Bloqueado !== "S" && point.Bloqueado !== "N") {
+      if (blocked !== "S" && blocked !== "N") {
         return invalid("Bloqueado");
       }
       return {
         number,
-        emissionType: point.EmisionTipo,
-        blocked: point.Bloqueado === "S",
+        emissionType,
+        blocked: blocked === "S",
         deletion: deletion(point),
       };
     }
@@ -254,6 +303,73 @@ export function parseWsfeSalesPointsStrict(value: unknown) {
     points,
     events,
   };
+}
+
+/** Recupera sólo códigos válidos, incluso si otra entrada o estructura falla. */
+function optionalRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function collectGroupIssues(node: Record<string, unknown>) {
+  const found: WsfeSalesPointsStrictIssue[] = [];
+  for (const [container, key, source] of [
+    ["Errors", "Err", "error"],
+    ["Events", "Evt", "event"],
+  ] as const) {
+    const entries = optionalRecord(node[container])?.[key];
+    for (const item of Array.isArray(entries) ? entries : [entries]) {
+      try {
+        const code = integer(
+          scalar(optionalRecord(item)?.Code, "Code"),
+          "Code",
+          2_147_483_647
+        );
+        found.push({ source, code });
+      } catch {
+        // Sólo los códigos validados se conservan; la validación completa falla después.
+      }
+    }
+  }
+  return found;
+}
+
+function collectValidIssues(value: unknown): WsfeSalesPointsStrictIssue[] {
+  const node = optionalRecord(value);
+  if (!node) {
+    return [];
+  }
+  const found = collectGroupIssues(node);
+  for (const key of [
+    "FEParamGetPtosVentaResponse",
+    "FEParamGetPtosVentaResult",
+  ]) {
+    if (has(node, key)) {
+      found.push(...collectValidIssues(node[key]));
+    }
+  }
+  return found;
+}
+
+export function parseWsfeSalesPointsStrict(value: unknown) {
+  const validatedIssues = collectValidIssues(value);
+  try {
+    return parseStrict(value);
+  } catch (error) {
+    if (
+      error instanceof ArcaSalesPointsStrictError &&
+      error.reason === "invalid_response"
+    ) {
+      throw new ArcaSalesPointsStrictError({
+        reason: "invalid_response",
+        field: error.field,
+        fieldState: error.fieldState,
+        issues: validatedIssues,
+      });
+    }
+    throw error;
+  }
 }
 
 /** No copia mensajes, cause, stack, previews ni objetos arbitrarios del transporte. */
