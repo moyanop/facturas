@@ -84,6 +84,27 @@ tipos compatibles y pistas de esquema; nunca se descargan esas pistas.
 promesa de aceptar extensiones futuras desconocidas: éstas fallan cerradas.
 Los errores y logs del camino estricto no guardan XML ni mensajes remotos.
 
+### Cabecera SOAP contextual
+
+Se admiten Header ausente, vacío (incluido whitespace) o con un único
+`FEHeaderInfo` en el namespace WSFE. La transición SOAP → WSFE se habilita sólo
+para ese bloque, no para contenido arbitrario. Sus únicos hijos son
+`ambiente`, `fecha` e `id`, cada uno como máximo una vez y de contenido escalar.
+Pueden omitirse: el manual no establece obligatoriedad individual de metadata.
+Ambiente e id son texto, no enums ni versiones fijas. Fecha presente exige
+calendario y sintaxis ISO, con fracción y zona opcionales; no se calcula vigencia.
+Se conservan los atributos XML legítimos y se validan los atributos SOAP
+propios de cada versión únicamente en FEHeaderInfo. Nil verdadero, duplicados,
+elementos desconocidos, campos anidados y atributos contradictorios fallan cerrados.
+
+La fuente es el manual oficial WSFEv1 v3.4.2, sección 1.3, páginas 17–18,
+que describe contexto de procesamiento opcional, no identidad certificada.
+El WSDL público consultado como documentación no declara FEHeaderInfo; no se
+afirma validación contra un XSD de cabecera inexistente en esa copia.
+Las fuentes y hash están registrados en `.github/ARCA_SOURCES.md`.
+La cabecera se descarta después de validarla: nunca modifica ni certifica
+`representedTaxId`, `environment`, autenticación o puntos de venta del resultado.
+
 El error contiene `code: ARCA_SALES_POINTS_STRICT_ERROR`, `reason`, campo y estado
 de validación cuando corresponden, códigos públicos, origen de autenticación,
 `originalCode` de errores SDK conocidos, status HTTP válido e intentos lógicos.
@@ -147,27 +168,28 @@ El checker original de exports también usa imports de paths absolutos que
 fallan en Windows. Las comprobaciones públicas portables y el consumidor de
 declaraciones se ejecutan por separado, sin atribuirles PASS al checker original.
 
-### Resultados después de corregir P1-A, P1-B y P2
+### Resultados después de corregir P1-A, P1-B, P2 y FEHeaderInfo
 
 | Comprobación | Resultado |
 | --- | --- |
 | Matriz estricta, 22 escenarios y variantes | 83 tests PASS. Red, emisión y numeración igual a cero. |
-| SOAP/HTTPS adversarial completo | 34 tests PASS, incluidos los 17 grupos de regresión, entidades/caracteres inválidos, atributos duplicados y XML obligatorio incluso con transporte inyectado. |
-| Regresión focal con WSFE original y SOAP original | 212 tests PASS en Node 22.23.3, 24.21.0 y 25.9.0. |
+| SOAP/HTTPS adversarial anterior | 34 tests PASS, incluidos los 17 grupos de regresión, entidades/caracteres inválidos, atributos duplicados y XML obligatorio incluso con transporte inyectado. |
+| Cabecera SOAP / FEHeaderInfo | 39 tests nuevos PASS: cabecera vacía, metadata opcional, namespaces, atributos y fechas válidas; rechazo de contradicciones, duplicados, desconocidos, nil y XML mal formado. Contexto fijado y legacy preservados. |
+| Regresión focal con WSFE original y SOAP original | 251 tests PASS (los 212 anteriores + 39 nuevos) en Node 22.23.3, 24.21.0 y 25.9.0. |
 | Typecheck de paquete, tests y ejemplos | PASS; tipos del paquete también comprobados en Node 22 y 24. Los tres errores `.not` reportados no se reprodujeron antes ni después de este bloque; no se eliminan assertions ni se excluyen tests del typecheck. |
 | Build ESM y declaraciones | PASS. No se editaron archivos dist manualmente. |
 | Consumidor de declaraciones públicas | PASS. |
 | Imports ESM y require de ESM | PASS en el artefacto y en un consumidor temporal instalado, Node 22.23.3, 24.21.0 y 25.9.0; SRI del lockfile confirmado. |
-| Dos builds y dos npm pack con fuentes LF | Tarballs idénticos byte a byte, 46 archivos, 300900 bytes; build con Node 24.21.0. |
+| Dos builds y dos npm pack con fuentes LF | Tarballs idénticos byte a byte, 46 archivos, 302213 bytes; build con Node 24.21.0. El consumidor instalado también comprueba FEHeaderInfo desde las entradas ESM y require de ESM. |
 | Lint y formato focal, docs y diff check | PASS. |
-| Suite completa en Windows, Node 22.23.3, 24.21.0 y 25.9.0 | Cada versión: 1189 PASS, 1 SKIP y 1 FAIL del file lock ya observado en la base original. No son corridas completamente verdes. |
+| Suite completa después de FEHeaderInfo, Windows / Node 24.21.0 | 1228 PASS, 1 SKIP y 1 FAIL del file lock ya observado en la base original. No es una corrida completamente verde. Antes de este bloque, Node 22/24/25 dieron 1189 PASS, 1 SKIP y el mismo FAIL. |
 | Check global de lint y formato | PASS de 132 archivos en clone con LF, sin reformatear código ajeno. |
 | Checker original check:exports en Windows | FAIL por import absoluto del CLI. Una copia temporal con sólo la conversión a file URL y bloqueo de red verifica todos los exports; PASS en Node 22, 24 y 25, sin cambiar el checker del SDK. |
 
 Integridad del tarball local `facturas-0.20.3-moyan.1.tgz`:
 
 ```text
-sha512-kr75X3xxQ+4C67YOvzcbUwhAt6KnhKmIpTR0TEQezp5OCfsCQ1L6bhl6g8Ka97huptkGoO/QBfpfeWa5D64m/w==
+sha512-SAZmgEeu6lWeUS0+GPt77seCMjNvV+JS5uTg/LC/KJu+rq0NNR8cgQ5L7g7GbkG+GQBiWAmBKi/wr61mgss6cw==
 ```
 
 Esta igualdad se comprobó con las fuentes finales del parche en un clone con LF,
@@ -220,3 +242,7 @@ error público, exports, hook interno `validateResponse`, tests, verificaciones
 y documentación. El hook sólo se usa en esta consulta; no altera transportes
 legacy sin validador. No requiere rollback de WSAA, emisión,
 reservas, numeración, bases de datos ni de Moyan. H.1B-1 permanece fuera de alcance.
+
+El bloque focal FEHeaderInfo se revierte de forma independiente: sólo agrega
+la excepción de namespace/cabecera y sus validaciones dentro del lector XML,
+pruebas SOAP y documentación/fuentes. No modifica transporte, WSAA ni método legacy.

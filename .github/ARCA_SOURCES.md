@@ -178,3 +178,24 @@ sector-specific codes, which the SDK does not ship.
   errores 602 como un resultado positivo vacío ni habilita emisión por sí sola.
 - No se afirma que la respuesta contenga un eco de CUIT, ambiente o vencimiento
   de autorización. El resultado conserva el contexto solicitado.
+
+### Cabecera contextual FEHeaderInfo del fork temporal
+
+- Manual WSFEv1 v3.4.2 enlazado arriba, sección 1.3, páginas impresas 17–18
+  (físicas PDF 17–18): `Header` es opcional y `FEHeaderInfo` aporta contexto
+  de procesamiento. Namespace: `http://ar.gov.afip.dif.FEV1/`; hijos documentados:
+  `ambiente`, `fecha`, `id`. Los ejemplos incluyen zona y siete dígitos de fracción.
+- El manual no establece obligatoriedad individual, enum de ambiente ni patrón
+  cerrado de versión para estos campos. No se inventan esas restricciones.
+- El WSDL público de homologación se consultó por GET como documentación,
+  sin credenciales ni ejecución SOAP. Copia del 11 de octubre de 2026:
+  SHA-256 `16f5b8450c35a2cfc0187f07d6236162bb57b663954a1e1f0267e71afe90af24`.
+  No contiene `FEHeaderInfo` ni bindings `soap:header`: no acredita un XSD
+  específico para esa metadata y no se presenta como tal.
+- Referencias de atributos: [SOAP 1.1, sección 4.2](https://www.w3.org/TR/2000/NOTE-SOAP-20000508/#_Toc478383497)
+  y [SOAP 1.2, sección 5.2](https://www.w3.org/TR/soap12-part1/#soapheader).
+  `mustUnderstand`/`actor` en 1.1; `mustUnderstand`/`role`/`relay` en 1.2.
+- La fecha presente se valida con calendario y sintaxis ISO compatible con
+  los ejemplos y [dateTime de XML Schema](https://www.w3.org/TR/xmlschema-2/#dateTime),
+  sin usarla para vigencia fiscal. Toda la cabecera se valida y descarta: no
+  sustituye CUIT, ambiente, credenciales o PV fijados por el backend.

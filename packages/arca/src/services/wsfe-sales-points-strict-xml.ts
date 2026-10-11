@@ -134,7 +134,10 @@ function compatibleType(
     return invalid("xml.xsi:type");
   }
   const type = qualified(value, scope);
-  const primitive = name === "Nro" || name === "Code" ? "int" : "string";
+  const primitives =
+    name === "fecha"
+      ? ["string", "dateTime"]
+      : [name === "Nro" || name === "Code" ? "int" : "string"];
   const scalar = [
     "Nro",
     "Code",
@@ -142,8 +145,11 @@ function compatibleType(
     "Bloqueado",
     "FchBaja",
     "Msg",
+    "ambiente",
+    "fecha",
+    "id",
   ].includes(name);
-  if (scalar && type.namespace === XSD && type.local === primitive) {
+  if (scalar && type.namespace === XSD && primitives.includes(type.local)) {
     return;
   }
   const complex: Record<string, string[]> = {
@@ -166,9 +172,13 @@ function attribute(
   key: string,
   value: unknown,
   name: string,
-  scope: Record<string, string>
+  scope: Record<string, string>,
+  parentNamespace?: string
 ) {
   const attr = qualified(key.slice(2), scope, true);
+  if (soapHeaderAttribute(attr, value, name, parentNamespace)) {
+    return undefined;
+  }
   if (attr.namespace === XSI) {
     if (attr.local === "nil") {
       return ["@_nil", value] as const;
@@ -195,6 +205,37 @@ function attribute(
   return invalid("xml.attribute");
 }
 
+/** Atributos SOAP propios del bloque FEHeaderInfo, no de sus campos ni del Body. */
+function soapHeaderAttribute(
+  attr: { local: string; namespace: string },
+  value: unknown,
+  name: string,
+  parentNamespace?: string
+): boolean {
+  if (
+    name !== "FEHeaderInfo" ||
+    !SOAP.has(attr.namespace) ||
+    attr.namespace !== parentNamespace
+  ) {
+    return false;
+  }
+  if (typeof value !== "string") {
+    return invalid("soap.Header.attribute");
+  }
+  const soap11 = attr.namespace === "http://schemas.xmlsoap.org/soap/envelope/";
+  const booleans = soap11 ? ["mustUnderstand"] : ["mustUnderstand", "relay"];
+  if (booleans.includes(attr.local)) {
+    if (!(soap11 ? ["0", "1"] : ["0", "1", "false", "true"]).includes(value)) {
+      return invalid("soap.Header.attribute");
+    }
+    return true;
+  }
+  if (attr.local === (soap11 ? "actor" : "role")) {
+    return true;
+  }
+  return invalid("soap.Header.attribute");
+}
+
 function validateNamespace(
   namespace: string,
   local: string,
@@ -214,6 +255,11 @@ function validateNamespace(
       namespace !==
       (local === "FEParamGetPtosVentaResponse" ? WSFE : parentNamespace)
     ) {
+      return invalid("xml.namespace");
+    }
+  } else if (parentName === "Header") {
+    // Única transición adicional: bloque contextual WSFE documentado, no Header arbitrario.
+    if (local !== "FEHeaderInfo" || namespace !== WSFE) {
       return invalid("xml.namespace");
     }
   } else if (namespace !== parentNamespace && namespace !== "") {
@@ -257,7 +303,15 @@ function normalizeElement(
       continue;
     }
     if (key.startsWith("@_")) {
-      assignAttribute(result, key, nested, element.local, scope, attributes);
+      assignAttribute(
+        result,
+        key,
+        nested,
+        element.local,
+        scope,
+        attributes,
+        parentNamespace
+      );
       continue;
     }
     if (key === "#text") {
@@ -304,7 +358,8 @@ function assignAttribute(
   value: unknown,
   name: string,
   scope: Record<string, string>,
-  attributes: Set<string>
+  attributes: Set<string>,
+  parentNamespace?: string
 ) {
   const expanded = qualified(key.slice(2), scope, true);
   const identity = `${expanded.namespace}:${expanded.local}`;
@@ -312,7 +367,7 @@ function assignAttribute(
     return invalid("xml.attribute");
   }
   attributes.add(identity);
-  const attr = attribute(key, value, name, scope);
+  const attr = attribute(key, value, name, scope, parentNamespace);
   if (!attr) {
     return;
   }
@@ -320,6 +375,87 @@ function assignAttribute(
     return invalid("xml.attribute");
   }
   result[attr[0]] = attr[1];
+}
+
+function headerText(value: unknown, field: string): string {
+  const text =
+    value !== null && typeof value === "object"
+      ? (validateStrictSalesPointsShape(value, ["#text"], field)["#text"] ?? "")
+      : value;
+  if (typeof text !== "string") {
+    return invalid(field);
+  }
+  return text;
+}
+
+function headerDate(value: string): void {
+  // Fecha contextual ISO: fracción y zona opcionales; no se calcula vigencia fiscal.
+  const match =
+    /^(-?(?:[1-9]\d{4,}|\d{4}))-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))?$/.exec(
+      value.trim()
+    );
+  if (!match) {
+    invalid("soap.Header.FEHeaderInfo.fecha");
+  }
+  const [year, month, day, hour, minute, second] = match
+    .slice(1, 7)
+    .map(Number);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const endOfDay =
+    hour === 24 &&
+    (minute !== 0 || second !== 0 || /[1-9]/.test(match[7] ?? ""));
+  const zoneHour = Number(match[8] ?? 0);
+  const zoneMinute = Number(match[9] ?? 0);
+  if (
+    !Number.isSafeInteger(year) ||
+    year === 0 ||
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > days[month - 1] ||
+    hour > 24 ||
+    minute > 59 ||
+    second > 59 ||
+    endOfDay ||
+    zoneHour > 14 ||
+    zoneMinute > 59 ||
+    (zoneHour === 14 && zoneMinute !== 0)
+  ) {
+    invalid("soap.Header.FEHeaderInfo.fecha");
+  }
+}
+
+function validateSoapHeader(value: unknown): void {
+  if (typeof value === "string" && value.trim() === "") {
+    return;
+  }
+  const header = validateStrictSalesPointsShape(
+    value,
+    ["FEHeaderInfo"],
+    "soap.Header"
+  );
+  if (!Object.hasOwn(header, "FEHeaderInfo")) {
+    return;
+  }
+  const content = header.FEHeaderInfo;
+  const info =
+    typeof content === "string" && content.trim() === ""
+      ? {}
+      : validateStrictSalesPointsShape(
+          content,
+          ["ambiente", "fecha", "id"],
+          "soap.Header.FEHeaderInfo"
+        );
+  // El manual no impone obligatoriedad individual ni enums para esta metadata opcional.
+  for (const key of ["ambiente", "fecha", "id"]) {
+    if (Object.hasOwn(info, key)) {
+      const text = headerText(info[key], `soap.Header.FEHeaderInfo.${key}`);
+      if (key === "fecha") {
+        headerDate(text);
+      }
+    }
+  }
 }
 
 /** Valida el raw obligatorio del transporte; nunca acredita el objeto result aislado. */
@@ -353,8 +489,8 @@ export function readWsfeSalesPointsStrictXml(
     ["Header", "Body"],
     "soap.Envelope"
   );
-  if (Object.hasOwn(envelope, "Header") && envelope.Header !== "") {
-    validateStrictSalesPointsShape(envelope.Header, [], "soap.Header");
+  if (Object.hasOwn(envelope, "Header")) {
+    validateSoapHeader(envelope.Header);
   }
   const body = validateStrictSalesPointsShape(
     envelope.Body,

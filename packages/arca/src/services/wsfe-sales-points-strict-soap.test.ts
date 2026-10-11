@@ -17,8 +17,8 @@ const issue = (code: number) =>
   `<Errors><Err><Code>${code}</Code><Msg>SECRETO-REMOTO</Msg></Err></Errors>`;
 const response = (content: string) =>
   `<FEParamGetPtosVentaResponse xmlns="${NS}"><FEParamGetPtosVentaResult>${content}</FEParamGetPtosVentaResult></FEParamGetPtosVentaResponse>`;
-const soap = (body: string) =>
-  `<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema"><s:Header/><s:Body>${body}</s:Body></s:Envelope>`;
+const soap = (body: string, header?: string) =>
+  `<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">${header === undefined ? "<s:Header/>" : `<s:Header>${header}</s:Header>`}<s:Body>${body}</s:Body></s:Envelope>`;
 let forbiddenConnections = 0;
 
 beforeEach(() => {
@@ -34,6 +34,7 @@ beforeEach(() => {
   vi.spyOn(net.Socket.prototype, "connect").mockImplementation(deny);
   vi.spyOn(tls, "connect").mockImplementation(deny);
 });
+
 afterEach(() => {
   expect(forbiddenConnections).toBe(0);
   vi.restoreAllMocks();
@@ -438,5 +439,209 @@ describe("Review P1/P2: frontera HTTPS/SOAP/XML completa", () => {
     });
     expect(JSON.stringify(failure)).not.toContain("SECRETO-REMOTO");
     expect(JSON.stringify(h.log.mock.calls)).not.toContain("SECRETO-REMOTO");
+  });
+});
+
+describe("P1 focal: FEHeaderInfo contextual en la frontera HTTPS/SOAP real", () => {
+  const header = (fields: string) =>
+    `<FEHeaderInfo xmlns="${NS}">${fields}</FEHeaderInfo>`;
+  const fields =
+    "<ambiente>Produccion</ambiente><fecha>2026-10-11T03:00:00</fecha><id>1.0.2.0</id>";
+  const official = header(fields);
+
+  it.each([
+    ["1 cabecera vacía", ""],
+    ["cabecera vacía con whitespace", "\n  "],
+    ["2 FEHeaderInfo legítima", official],
+    [
+      "3 namespace WSFE con alias local",
+      '<f:FEHeaderInfo xmlns:f="' +
+        NS +
+        '"><f:ambiente>Homologacion - Clo</f:ambiente><f:fecha>2018-09-13T12:43:28.2091828-03:00</f:fecha><f:id>1.0.2.0</f:id></f:FEHeaderInfo>',
+    ],
+    ["campos contextuales omitidos", header("")],
+    ["sólo ambiente libre", header("<ambiente>Homologacion - Clo</ambiente>")],
+    [
+      "sólo fecha UTC y fracción",
+      header("<fecha>2026-10-11T03:00:00.1234567Z</fecha>"),
+    ],
+    ["id textual y ambiente vacíos", header("<ambiente/><id/>")],
+    ["id contextual sin enum de versión", header("<id>VERSION-FUTURA</id>")],
+    [
+      "fecha bisiesta y offset límite",
+      header("<fecha>2024-02-29T03:00:00+14:00</fecha>"),
+    ],
+    [
+      "medianoche ISO legítima",
+      header("<fecha>2026-10-11T24:00:00.000</fecha>"),
+    ],
+    [
+      "atributos compatibles",
+      official
+        .replace(
+          "<FEHeaderInfo ",
+          '<FEHeaderInfo xsi:nil="false" xsi:type="FEHeaderInfo" s:mustUnderstand="true" s:role="http://www.w3.org/2003/05/soap-envelope/role/ultimateReceiver" s:relay="false" '
+        )
+        .replace("<fecha>", '<fecha xsi:type="xsd:dateTime">')
+        .replace("<id>", '<id xsi:type="xsd:string" xml:space="preserve">'),
+    ],
+  ])(
+    "%s conserva el contexto fijado, no el del Header",
+    async (_name, content) => {
+      const h = harness([soap(response(DATA), content)]);
+      const result = await h.service.getSalesPointsStrict();
+      expect(result).toMatchObject({
+        environment: "test",
+        representedTaxId: "00000000000",
+        points: [{ number: 1, blocked: false }],
+      });
+      expect(Object.keys(result)).not.toContain("FEHeaderInfo");
+      expect(JSON.stringify(result)).not.toMatch(
+        /Produccion|1\.0\.2\.0|2026-10-11T/
+      );
+      expect(h.requests[0]).toContain("<Cuit>0</Cuit>");
+      expect(h.requests[0]).toContain("SINTETICO");
+      expect(h.requests).toHaveLength(1);
+    }
+  );
+  it.each([
+    ["4 namespace incorrecto", official.replace(NS, "urn:ajeno")],
+    [
+      "namespace incorrecto en campo",
+      official.replace("<fecha>", '<fecha xmlns="urn:ajeno">'),
+    ],
+    ["5 texto en lugar de estructura", header("SECRETO-REMOTO")],
+    ["6 elemento desconocido", header(`${fields}<desconocido/>`)],
+    ["elemento desconocido en Header", `${official}<Otro xmlns="${NS}"/>`],
+    ["7 dos FEHeaderInfo", official + official],
+    [
+      "dos valores de ambiente",
+      header(`${fields}<ambiente>Homologacion</ambiente>`),
+    ],
+    [
+      "campo con estructura anidada",
+      header(
+        fields.replace("<id>1.0.2.0</id>", "<id><id>SECRETO-REMOTO</id></id>")
+      ),
+    ],
+    ["8 cierre XML incorrecto", official.replace("</fecha>", "</id>")],
+    ["9 Errors mal ubicados", header(fields + issue(602))],
+    [
+      "9 Events mal ubicados",
+      header(`${fields}<Events><Evt><Code>39</Code></Evt></Events>`),
+    ],
+    [
+      "10 nil contradictorio",
+      official.replace("<FEHeaderInfo ", '<FEHeaderInfo xsi:nil="true" '),
+    ],
+    [
+      "nil contradictorio en campo",
+      official.replace("<fecha>", '<fecha xsi:nil="true">'),
+    ],
+    [
+      "atributo desconocido",
+      official.replace("<FEHeaderInfo ", '<FEHeaderInfo autentica="true" '),
+    ],
+    [
+      "atributo SOAP inválido",
+      official.replace(
+        "<FEHeaderInfo ",
+        '<FEHeaderInfo s:mustUnderstand="desconocido" '
+      ),
+    ],
+    ["tipo incompatible", official.replace("<id>", '<id xsi:type="xsd:int">')],
+    [
+      "fecha de calendario imposible",
+      header("<fecha>2026-02-29T03:00:00</fecha>"),
+    ],
+    ["fecha en formato ajeno", header("<fecha>11/10/2026</fecha>")],
+    ["hora imposible", header("<fecha>2026-10-11T25:00:00</fecha>")],
+    [
+      "zona horaria imposible",
+      header("<fecha>2026-10-11T03:00:00+14:01</fecha>"),
+    ],
+    [
+      "medianoche contradictoria",
+      header("<fecha>2026-10-11T24:00:00.001</fecha>"),
+    ],
+    [
+      "atributo de otra versión SOAP",
+      official.replace(
+        "<FEHeaderInfo ",
+        '<FEHeaderInfo xmlns:o="http://schemas.xmlsoap.org/soap/envelope/" o:mustUnderstand="1" '
+      ),
+    ],
+  ])("%s falla cerrado sin refresh ni secretos", async (_name, content) => {
+    const h = harness([soap(response(DATA), content)]);
+    const failure: unknown = await h.service
+      .getSalesPointsStrict({ authenticationRecovery: true })
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ArcaSalesPointsStrictError);
+    expect(failure).toMatchObject({ reason: "invalid_response" });
+    expect(h.requests).toHaveLength(1);
+    expect(h.login).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(failure)).not.toMatch(/SECRETO-REMOTO|<|SINTETICO/);
+    expect(JSON.stringify(h.log.mock.calls)).not.toMatch(
+      /SECRETO-REMOTO|<|SINTETICO/
+    );
+  });
+  it("rechaza dos Header completos", async () => {
+    const xml = soap(response(DATA), official).replace(
+      "</s:Header>",
+      `</s:Header><s:Header>${official}</s:Header>`
+    );
+    await expect(
+      harness([xml]).service.getSalesPointsStrict()
+    ).rejects.toMatchObject({ reason: "invalid_response" });
+  });
+  it("11 Header válido no oculta 602 más evento inválido", async () => {
+    const h = harness([
+      soap(
+        response(
+          `${issue(602)}<Events><Evt><Code>INVALID</Code></Evt></Events>`
+        ),
+        official
+      ),
+    ]);
+    await expect(
+      h.service.getSalesPointsStrict({ authenticationRecovery: true })
+    ).rejects.toMatchObject({
+      reason: "invalid_response",
+      issues: [{ source: "error", code: 602 }],
+    });
+    expect(h.requests).toHaveLength(1);
+    expect(h.login).toHaveBeenCalledTimes(1);
+  });
+  it("12 Header válido y FchBaja opcional ausente", async () => {
+    expect(
+      (
+        await harness([
+          soap(response(DATA.replace("<FchBaja/>", "")), official),
+        ]).service.getSalesPointsStrict()
+      ).points[0].deletion
+    ).toEqual({ kind: "absent" });
+  });
+  it("13 legacy acepta la misma cabecera y mantiene su resultado", async () => {
+    const h = harness([soap(response(DATA), official)]);
+    expect((await h.service.getSalesPoints())[0]).toMatchObject({
+      number: 1,
+      blocked: false,
+    });
+    expect(h.requests).toHaveLength(1);
+  });
+  it("SOAP 1.1 permite FEHeaderInfo y sus atributos propios", async () => {
+    const xml = soap(
+      response(DATA),
+      official.replace(
+        "<FEHeaderInfo ",
+        '<FEHeaderInfo s:mustUnderstand="1" s:actor="http://schemas.xmlsoap.org/soap/actor/next" '
+      )
+    ).replace(
+      "http://www.w3.org/2003/05/soap-envelope",
+      "http://schemas.xmlsoap.org/soap/envelope/"
+    );
+    expect(
+      (await harness([xml]).service.getSalesPointsStrict()).points
+    ).toHaveLength(1);
   });
 });
