@@ -2,6 +2,7 @@ import {
   ArcaAuthenticationError,
   ArcaInputError,
   type ArcaInputErrorCode,
+  ArcaSalesPointsStrictError,
   createArcaClient,
   type IssuePreview,
   isArcaAuthenticationError,
@@ -9,6 +10,8 @@ import {
   type VouchersService,
   type WsfeAuthorizationOutcome,
   type WsfeIssueInput,
+  type WsfeSalesPointsStrictInput,
+  type WsfeSalesPointsStrictResult,
   type WsfeVoucherInput,
 } from "facturas";
 import { ARCA_CURRENCY_IDS, ISO_CURRENCIES } from "facturas/constants";
@@ -18,8 +21,29 @@ import {
 } from "facturas/errors";
 import type {
   WsfeIssueInput as SubpathIssueInput,
+  WsfeSalesPointsStrictResult as SubpathSalesPointsStrictResult,
   WsfeVoucherInput as SubpathVoucherInput,
 } from "facturas/wsfe";
+
+// Compatibilidad de declaraciones de la API aditiva desde ambos entrypoints.
+const strictClient = createArcaClient({
+  taxId: "00000000000",
+  certificatePem: "OFFLINE",
+  privateKeyPem: "OFFLINE",
+  environment: "test",
+  retries: 0,
+});
+const strictInput: WsfeSalesPointsStrictInput = {
+  authenticationRecovery: false,
+};
+const strictResult: Promise<WsfeSalesPointsStrictResult> =
+  strictClient.wsfe.getSalesPointsStrict(strictInput);
+const subpathStrictResult: Promise<SubpathSalesPointsStrictResult> =
+  strictResult;
+const strictFailure = new ArcaSalesPointsStrictError({
+  reason: "invalid_response",
+});
+console.log(subpathStrictResult, strictFailure);
 
 // The transport modules take the provider request as it goes on the wire.
 const transportInput: WsfeVoucherInput = {

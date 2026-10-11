@@ -164,3 +164,17 @@ caller's lines, so the ajuste IVA code rule does not apply.
 
 `ARCA_WSMTXCA_GENERIC_CODES` mirrors section B. Section C lists
 sector-specific codes, which the SDK does not ship.
+
+## Consulta estricta WSFE del fork temporal
+
+- [Manual oficial WSFEv1 v3.4.2](https://www.afip.gov.ar/ws/WSFEV1/documentos/manual-desarrollador-COMPG-v3-4-2.pdf).
+- Consultado el 11 de octubre de 2026, sin requests SOAP ni homologación real.
+- Sección 2.12, página impresa 106, página física PDF 107: Nro, EmisionTipo y
+  Bloqueado son obligatorios. FchBaja es opcional. EmisionTipo admite CAE o CAEA,
+  Bloqueado admite S o N y FchBaja es String(8).
+- Nro utiliza el dominio de puntos de venta 1 a 99998. No se reserva el 99999.
+- La API estricta distingue ausencia, vacío y fecha calendario válida. Rechaza
+  campos obligatorios incompletos y toda duplicación de número. No normaliza
+  errores 602 como un resultado positivo vacío ni habilita emisión por sí sola.
+- No se afirma que la respuesta contenga un eco de CUIT, ambiente o vencimiento
+  de autorización. El resultado conserva el contexto solicitado.

@@ -10,6 +10,7 @@ const publicErrorClasses = [
   "ArcaConfigurationError",
   "ArcaInputError",
   "ArcaAuthenticationError",
+  "ArcaSalesPointsStrictError",
   "ArcaTransportError",
   "ArcaSoapFaultError",
   "ArcaInvalidSoapResponseError",

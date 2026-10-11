@@ -31,6 +31,18 @@ notas de crédito y notas de débito, y consultá el Padrón con una sola API.
 La documentación está en castellano, en el [sitio de documentación](https://facturas-sdk.dev)
 y en su [fuente Mintlify](./docs/index.mdx).
 
+## Fork temporal de compatibilidad
+
+Este fork agrega `client.wsfe.getSalesPointsStrict()` sobre la base exacta
+`facturas@0.20.3`. El artefacto local se identifica como `0.20.3-moyan.1`.
+No es una versión publicada en npm ni incorpora los cambios posteriores del SDK.
+`getSalesPoints()` conserva su comportamiento original.
+
+La nueva lectura valida el resultado completo y conserva los códigos WSFE en
+`ArcaSalesPointsStrictError`, sin mensajes remotos ni secretos. No transforma el
+error 602 en una lista vacía. No habilita emisión ni readiness fiscal por sí sola.
+Leé el [contrato, las pruebas y la instalación reproducible](./docs/wsfe-puntos-venta-estrictos.md).
+
 ## Instalación
 
 ```bash
