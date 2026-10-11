@@ -117,21 +117,23 @@ declaraciones se ejecutan por separado, sin atribuirles PASS al checker original
 | Build ESM y declaraciones | PASS. No se editaron archivos dist manualmente. |
 | Consumidor de declaraciones públicas | PASS. |
 | Imports ESM y require de ESM | PASS en el artefacto y en un consumidor instalado, Node 22.23.3 y 25.4.0. |
-| Dos builds y dos npm pack | Tarballs idénticos byte a byte, 46 archivos, 293872 bytes. |
+| Dos builds y dos npm pack desde clone limpio | Tarballs idénticos byte a byte, 46 archivos, 292292 bytes. |
 | Lint y formato focal, docs y diff check | PASS. |
 | Suite completa en Windows | 1141 PASS, 1 SKIP y 1 FAIL del file lock ya observado en la base original. No es una corrida completamente verde. |
-| Check global de formato en Windows | FAIL por CRLF de archivos originales del checkout. No se reformateó código ajeno. |
+| Check global de lint y formato | PASS de 130 archivos en clone limpio con LF. El primer checkout con CRLF falló por formato, sin reformatear código ajeno. |
 | Checker original check:exports en Windows | FAIL por import absoluto del CLI. Se verificaron exports y tipos con comandos independientes. |
 
 Integridad del tarball local `facturas-0.20.3-moyan.1.tgz`:
 
 ```text
-sha512-iItJuGvBqsdQBi4y3PkmVlTQEilJbR5UWtZki+5AU2t4gGIiGN+vLoq1AcaqOEF9mphnjjkdOWZ6HNxhiVfIBg==
+sha512-WBxAzYXowtbAMDJ2uqCy35D0kbv0BxLnS6OGtw9VdLr0xqMx7DQUBNmOjW5ax6NMOxCvVLjaM/Yn0A0Q/KhEEQ==
 ```
 
-Esta igualdad se comprobó con pnpm 12.4.1 y Node 25.4.0 en el mismo entorno de
-build. No se promete igualdad de tarballs entre toolchains o sistemas operativos
-distintos sin repetir la comprobación.
+Esta igualdad se comprobó desde el commit publicado en un clone limpio con LF,
+pnpm 12.4.1 y Node 25.4.0. Los source maps incorporan el contenido fuente y sus
+finales de línea. El primer artefacto construido desde el checkout CRLF tuvo
+otra integridad y no es el artefacto de referencia. No se promete igualdad entre
+toolchains o sistemas operativos distintos sin repetir la comprobación.
 
 ## Instalación reproducible futura
 
@@ -140,7 +142,7 @@ no el paquete `facturas`. Después de aprobar el parche, fijá el SHA completo d
 su commit, compilá `packages/arca` con el lockfile y generá un tarball:
 
 ```bash
-git clone https://github.com/moyanop/facturas.git
+git clone -c core.autocrlf=false https://github.com/moyanop/facturas.git
 cd facturas
 git checkout --detach <SHA_COMPLETO_REVISADO>
 pnpm install --frozen-lockfile
