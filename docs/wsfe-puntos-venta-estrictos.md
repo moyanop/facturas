@@ -48,6 +48,10 @@ try {
 | Errores 600/601 | Autenticación contextual. 600 no prueba revocación y 601 no prueba una revocación global. |
 | Eventos | Conserva códigos, no mensajes. El caller debe evaluar los eventos antes de autorizar su propio flujo. |
 
+Los envelopes anidados no pueden tener `ResultGet`, `Errors` ni `Events`
+paralelos fuera de su resultado. Esas estructuras contradictorias se rechazan;
+no se descarta información para aceptar los puntos de venta internos.
+
 El error contiene `code: ARCA_SALES_POINTS_STRICT_ERROR`, `reason`, campo y estado
 de validación cuando corresponden, códigos públicos, origen de autenticación,
 `originalCode` de errores SDK conocidos, status HTTP válido e intentos lógicos.
@@ -111,25 +115,26 @@ declaraciones se ejecutan por separado, sin atribuirles PASS al checker original
 
 | Comprobación | Resultado |
 | --- | --- |
-| Matriz estricta, 22 escenarios y variantes | 69 tests PASS. Red, emisión y numeración igual a cero. |
-| Regresión focal junto con WSFE original | 159 tests PASS en Node 25.4.0 y Node 22.23.3. |
+| Matriz estricta, 22 escenarios y variantes | 71 tests PASS. Red, emisión y numeración igual a cero. |
+| Regresión focal junto con WSFE original | 161 tests PASS en Node 25.4.0 y Node 22.23.3. |
 | Typecheck de paquete y ejemplos | PASS. |
 | Build ESM y declaraciones | PASS. No se editaron archivos dist manualmente. |
 | Consumidor de declaraciones públicas | PASS. |
 | Imports ESM y require de ESM | PASS en el artefacto y en un consumidor instalado, Node 22.23.3 y 25.4.0. |
-| Dos builds y dos npm pack desde clone limpio | Tarballs idénticos byte a byte, 46 archivos, 292292 bytes. |
+| Dos builds y dos npm pack con fuentes LF | Tarballs idénticos byte a byte, 46 archivos, 292453 bytes. |
 | Lint y formato focal, docs y diff check | PASS. |
-| Suite completa en Windows | 1141 PASS, 1 SKIP y 1 FAIL del file lock ya observado en la base original. No es una corrida completamente verde. |
+| Suite completa en Windows, Node 25.4.0 | Última corrida: 1144 PASS y 1 SKIP. Corridas anteriores reprodujeron el fallo intermitente del file lock. |
+| Suite completa en Windows, Node 22.23.3 | 1143 PASS, 1 SKIP y 1 FAIL del file lock ya observado en la base original. No es una corrida completamente verde. |
 | Check global de lint y formato | PASS de 130 archivos en clone limpio con LF. El primer checkout con CRLF falló por formato, sin reformatear código ajeno. |
 | Checker original check:exports en Windows | FAIL por import absoluto del CLI. Se verificaron exports y tipos con comandos independientes. |
 
 Integridad del tarball local `facturas-0.20.3-moyan.1.tgz`:
 
 ```text
-sha512-WBxAzYXowtbAMDJ2uqCy35D0kbv0BxLnS6OGtw9VdLr0xqMx7DQUBNmOjW5ax6NMOxCvVLjaM/Yn0A0Q/KhEEQ==
+sha512-L/8jPYjolHunnzF3Oox66tBG09Gb9f8a/aI8gYw5fcfOnpD2CKsIFY/yLFjK9vNR7aCE9soHjkzA86rLh47JJw==
 ```
 
-Esta igualdad se comprobó desde el commit publicado en un clone limpio con LF,
+Esta igualdad se comprobó con las fuentes finales del parche en un clone con LF,
 pnpm 12.4.1 y Node 25.4.0. Los source maps incorporan el contenido fuente y sus
 finales de línea. El primer artefacto construido desde el checkout CRLF tuvo
 otra integridad y no es el artefacto de referencia. No se promete igualdad entre

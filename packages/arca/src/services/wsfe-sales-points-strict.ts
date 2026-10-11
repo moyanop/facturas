@@ -92,7 +92,8 @@ function unwrap(value: unknown): Record<string, unknown> {
     if (
       has(envelope, resultKey) ||
       has(envelope, "ResultGet") ||
-      has(envelope, "Errors")
+      has(envelope, "Errors") ||
+      has(envelope, "Events")
     ) {
       return invalid("envelope");
     }
@@ -107,7 +108,11 @@ function unwrap(value: unknown): Record<string, unknown> {
     return record(response[resultKey], "envelope");
   }
   if (has(envelope, resultKey)) {
-    if (has(envelope, "ResultGet") || has(envelope, "Errors")) {
+    if (
+      has(envelope, "ResultGet") ||
+      has(envelope, "Errors") ||
+      has(envelope, "Events")
+    ) {
       return invalid("envelope");
     }
     return record(envelope[resultKey], "envelope");

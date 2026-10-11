@@ -298,6 +298,16 @@ describe("Validaciones adicionales y recuperación controlada", () => {
     { Errors: {} },
     { Errors: { Err: { Code: "602x" } } },
     { ...response(valid), Events: {} },
+    {
+      FEParamGetPtosVentaResponse: {
+        FEParamGetPtosVentaResult: response(valid),
+      },
+      Events: { Evt: { Code: 39 } },
+    },
+    {
+      FEParamGetPtosVentaResult: response(valid),
+      Events: { Evt: { Code: 39 } },
+    },
   ])("rechaza envelope o colección incompletos %j", async (fixture) => {
     await expect(
       harness([fixture]).service.getSalesPointsStrict()
