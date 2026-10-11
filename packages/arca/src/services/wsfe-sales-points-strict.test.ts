@@ -8,7 +8,7 @@ import {
   ArcaSalesPointsStrictError,
   ArcaTransportError,
 } from "../errors";
-import { getSingleBodyEntry, parseSoapBody } from "../internal/xml";
+import { buildSoapEnvelope } from "../internal/xml";
 import { createWsfeService } from "../wsfe";
 import { parseWsfeSalesPointsStrict } from "./wsfe-sales-points-strict";
 
@@ -94,6 +94,7 @@ function harness(fixtures: unknown[], retries = 0, loginFailure = false) {
               return Promise.reject(fixture);
             }
             return Promise.resolve({
+              raw: rawResult({ FEParamGetPtosVentaResult: fixture }),
               result: { FEParamGetPtosVentaResult: fixture },
             });
           }
@@ -106,6 +107,30 @@ function harness(fixtures: unknown[], retries = 0, loginFailure = false) {
     logins,
     calls: () => calls,
   };
+}
+
+function xmlFixture(value: unknown): unknown {
+  if (value === undefined || value === null) {
+    return { "@_xsi:nil": "true" };
+  }
+  if (Array.isArray(value)) {
+    return Array.from(value, xmlFixture);
+  }
+  if (typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nested]) => [key, xmlFixture(nested)])
+    );
+  }
+  return value;
+}
+
+function rawResult(result: Record<string, unknown>): string {
+  return buildSoapEnvelope(
+    "1.2",
+    "FEParamGetPtosVentaResponse",
+    "http://ar.gov.afip.dif.FEV1/",
+    xmlFixture(result) as Record<string, unknown>
+  );
 }
 
 describe("H.1B-0: 22 escenarios en el SDK real", () => {
@@ -183,6 +208,15 @@ describe("H.1B-0: 22 escenarios en el SDK real", () => {
     ],
   ];
   it.each(cases)("%s", async (name, fixture, reason, codes) => {
+    if (name.startsWith("8 ")) {
+      // Una colección JS explícita vacía no equivale a un XML ResultGet vacío.
+      // Se conserva el contrato del parser; no se inventa raw para acreditarla.
+      expect(parseWsfeSalesPointsStrict(fixture)).toMatchObject({
+        kind: "empty",
+        points: [],
+      });
+      return;
+    }
     const h = harness(
       name.startsWith("15 ") ? [fixture, response(valid)] : [fixture],
       0,
@@ -252,7 +286,9 @@ describe("Validaciones adicionales y recuperación controlada", () => {
   ])("rechaza Nro=%s", async (Nro) => {
     await expect(
       harness([response({ ...valid, Nro })]).service.getSalesPointsStrict()
-    ).rejects.toMatchObject({ field: "Nro" });
+    ).rejects.toMatchObject({
+      field: expect.stringMatching(/^Nro(?:\.xsi:nil)?$/),
+    });
   });
   it.each([
     "20260229",
@@ -264,10 +300,10 @@ describe("Validaciones adicionales y recuperación controlada", () => {
     null,
     undefined,
     "00000000",
-  ])("rechaza FchBaja=%s", async (FchBaja) => {
-    await expect(
-      harness([response({ ...valid, FchBaja })]).service.getSalesPointsStrict()
-    ).rejects.toMatchObject({ field: "FchBaja" });
+  ])("rechaza FchBaja=%s", (FchBaja) => {
+    expect(() =>
+      parseWsfeSalesPointsStrict(response({ ...valid, FchBaja }))
+    ).toThrow(ArcaSalesPointsStrictError);
   });
   it.each(["20240229", "20000229", "20261231"])(
     "acepta fecha calendario %s",
@@ -309,10 +345,10 @@ describe("Validaciones adicionales y recuperación controlada", () => {
       FEParamGetPtosVentaResult: response(valid),
       Events: { Evt: { Code: 39 } },
     },
-  ])("rechaza envelope o colección incompletos %j", async (fixture) => {
-    await expect(
-      harness([fixture]).service.getSalesPointsStrict()
-    ).rejects.toMatchObject({ reason: "invalid_response" });
+  ])("rechaza envelope o colección incompletos del parser %j", (fixture) => {
+    expect(() => parseWsfeSalesPointsStrict(fixture)).toThrow(
+      ArcaSalesPointsStrictError
+    );
   });
   it("conserva eventos y no filtra mensajes remotos", async () => {
     const result = await harness([
@@ -396,6 +432,12 @@ describe("Validaciones adicionales y recuperación controlada", () => {
   it("rechaza wrappers contradictorios y arrays sparse sin filtrar entradas", async () => {
     const h = harness([]);
     h.options.soap.execute.mockResolvedValueOnce({
+      raw: rawResult({
+        FEParamGetPtosVentaResponse: {
+          FEParamGetPtosVentaResult: response(valid),
+        },
+        FEParamGetPtosVentaResult: response(valid),
+      }),
       result: {
         FEParamGetPtosVentaResponse: {
           FEParamGetPtosVentaResult: response(valid),
@@ -404,11 +446,11 @@ describe("Validaciones adicionales y recuperación controlada", () => {
       },
     });
     await expect(h.service.getSalesPointsStrict()).rejects.toMatchObject({
-      field: "envelope",
+      field: "envelope.structure",
     });
     await expect(
       harness([response(new Array(1))]).service.getSalesPointsStrict()
-    ).rejects.toMatchObject({ field: "PtoVenta" });
+    ).rejects.toMatchObject({ field: "PtoVenta.xsi:nil" });
   });
   it("no recupera una falla mixta ni acepta respuesta inválida tras refresh", async () => {
     const mixed = harness(
@@ -449,6 +491,7 @@ describe("Validaciones adicionales y recuperación controlada", () => {
     h.options.soap.execute.mockImplementationOnce(() => {
       controller.abort("SECRETO-REMOTO");
       return Promise.resolve({
+        raw: rawResult({ FEParamGetPtosVentaResult: response(valid) }),
         result: { FEParamGetPtosVentaResult: response(valid) },
       });
     });
@@ -463,12 +506,8 @@ describe("Validaciones adicionales y recuperación controlada", () => {
   });
   it("usa el parser XML real sin transporte alternativo", async () => {
     const h = harness([]);
-    const xml =
-      "<Envelope><Body><FEParamGetPtosVentaResponse><FEParamGetPtosVentaResult><ResultGet><PtoVenta><Nro>1</Nro><EmisionTipo>CAE</EmisionTipo><Bloqueado>N</Bloqueado><FchBaja/></PtoVenta></ResultGet></FEParamGetPtosVentaResult></FEParamGetPtosVentaResponse></Body></Envelope>";
-    const [, result] = getSingleBodyEntry<Record<string, unknown>>(
-      parseSoapBody(xml)
-    );
-    h.options.soap.execute.mockResolvedValueOnce({ result });
+    const xml = rawResult({ FEParamGetPtosVentaResult: response(valid) });
+    h.options.soap.execute.mockResolvedValueOnce({ raw: xml, result: {} });
     expect((await h.service.getSalesPointsStrict()).points[0]).toMatchObject({
       number: 1,
       deletion: { kind: "empty" },

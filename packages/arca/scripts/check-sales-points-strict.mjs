@@ -66,6 +66,7 @@ for (const factory of [
         assert.equal(request.operation, "FEParamGetPtosVenta");
         calls++;
         return Promise.resolve({
+          raw: '<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><FEParamGetPtosVentaResponse xmlns="http://ar.gov.afip.dif.FEV1/"><FEParamGetPtosVentaResult><Errors><Err><Code>602</Code><Msg>SECRETO-REMOTO</Msg></Err></Errors></FEParamGetPtosVentaResult></FEParamGetPtosVentaResponse></s:Body></s:Envelope>',
           result: {
             FEParamGetPtosVentaResult: {
               Errors: { Err: { Code: 602, Msg: "SECRETO-REMOTO" } },

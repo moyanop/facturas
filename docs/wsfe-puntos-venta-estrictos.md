@@ -42,7 +42,7 @@ try {
 | `Bloqueado` | S o N obligatorios. Ausente o desconocido nunca significa desbloqueado. |
 | `FchBaja` | Opcional. `deletion.kind` distingue `absent`, `empty` y `date`. Una fecha presente exige YYYYMMDD y calendario gregoriano válido. No admite sentinels, null ni objetos nil. |
 | Duplicados | Rechaza toda repetición de Nro, incluso idéntica o con otra modalidad. No elige la primera entrada. |
-| Vacío | Sólo `ResultGet.PtoVenta: []` produce `kind: empty`. Un ResultGet omitido, incompleto o vacío no acredita una colección válida. |
+| Vacío | El parser sólo acredita `ResultGet.PtoVenta: []`. La API pública exige XML íntegro: `<ResultGet/>` no acredita esa colección y falla cerrada. No se inventa una representación remota vacía. |
 | Error 602 | Falla estructurada con código 602. Nunca `[]`. |
 | Errores junto con datos | Respuesta inválida. Conserva todos los códigos que fueron validados. |
 | Errores 600/601 | Autenticación contextual. 600 no prueba revocación y 601 no prueba una revocación global. |
@@ -64,6 +64,25 @@ numéricos válidos encontrados, el campo inválido y `reason: invalid_response`
 Un error 602 con un evento inválido no pierde el 602. Una respuesta mixta o
 estructuralmente inválida con 600/601 tampoco autoriza un refresh. Esos códigos
 no acreditan por sí solos revocación de autorización.
+
+## Integridad XML obligatoria
+
+El camino estricto reutiliza `raw` del transporte SOAP existente. Un hook interno
+valida ese texto **antes** del parser permisivo del SDK y de sus diagnósticos con
+previews. Después del transporte vuelve a validar `raw`: un transporte inyectado
+que ignore el hook no puede acreditar su objeto `result` sin XML válido.
+No hay flag público para omitir esta validación ni un transporte SOAP alternativo.
+
+Se reutiliza `XMLValidator` de `fast-xml-parser`, ya presente en el lockfile.
+Además se verifican caracteres y referencias XML 1.0, namespaces expandidos,
+atributos relevantes y estructura SOAP/WSFE completa con un parser que conserva
+prefijos y atributos antes de normalizarlos. Se rechazan cierres incorrectos,
+DOCTYPE, namespaces ajenos, `xsi:nil` contradictorio y tipos incompatibles.
+Se admiten SOAP 1.1/1.2, aliases legítimos, declaraciones locales, `xsi:nil` falso,
+tipos compatibles y pistas de esquema; nunca se descargan esas pistas.
+`FchBaja` sigue siendo opcional. Esto no es una validación XSD completa ni una
+promesa de aceptar extensiones futuras desconocidas: éstas fallan cerradas.
+Los errores y logs del camino estricto no guardan XML ni mensajes remotos.
 
 El error contiene `code: ARCA_SALES_POINTS_STRICT_ERROR`, `reason`, campo y estado
 de validación cuando corresponden, códigos públicos, origen de autenticación,
@@ -100,7 +119,7 @@ Desde la raíz, con Node >=22 y pnpm 12.4.1:
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm --filter facturas exec vitest run src/services/wsfe-sales-points-strict.test.ts src/services/wsfe.test.ts
+pnpm --filter facturas exec vitest run src/services/wsfe-sales-points-strict.test.ts src/services/wsfe-sales-points-strict-soap.test.ts src/services/wsfe.test.ts src/soap/index.test.ts
 pnpm typecheck
 pnpm --filter facturas build
 node packages/arca/scripts/check-sales-points-strict.mjs
@@ -112,7 +131,11 @@ pnpm check:docs
 
 La suite strict cubre los 22 escenarios H.1B-0, más límites numéricos,
 calendario, estructuras incompletas, duplicados idénticos, eventos, refresh
-controlado, abort y el parser XML real. Bloquea fetch, HTTP/HTTPS, Socket y TLS.
+controlado, abort y el parser XML real. El caso 8, colección JavaScript
+explícitamente vacía, se comprueba sólo en el parser: no se fabrica un XML que
+acredite esa forma. Las fixtures de la API incluyen `raw` obligatorio.
+La suite SOAP adversarial recorre HTTPS sintético → HTTP/SOAP/XML reales del SDK
+y cubre los 17 grupos solicitados más variantes. Bloquea fetch, HTTP/HTTPS, Socket y TLS.
 El transporte sólo permite FEParamGetPtosVenta. No hay emisión ni numeración.
 Las entradas públicas compiladas se prueban con ESM y `require()` en versiones
 de Node que soportan require de ESM. No se agrega un bundle CJS separado.
@@ -124,31 +147,31 @@ El checker original de exports también usa imports de paths absolutos que
 fallan en Windows. Las comprobaciones públicas portables y el consumidor de
 declaraciones se ejecutan por separado, sin atribuirles PASS al checker original.
 
-### Resultados de la preparación del parche
+### Resultados después de corregir P1-A, P1-B y P2
 
 | Comprobación | Resultado |
 | --- | --- |
-| Matriz estricta, 22 escenarios y variantes | 71 tests PASS. Red, emisión y numeración igual a cero. |
-| Regresión focal junto con WSFE original | 161 tests PASS en Node 25.4.0 y Node 22.23.3. |
-| Typecheck de paquete y ejemplos | PASS. |
+| Matriz estricta, 22 escenarios y variantes | 83 tests PASS. Red, emisión y numeración igual a cero. |
+| SOAP/HTTPS adversarial completo | 34 tests PASS, incluidos los 17 grupos de regresión, entidades/caracteres inválidos, atributos duplicados y XML obligatorio incluso con transporte inyectado. |
+| Regresión focal con WSFE original y SOAP original | 212 tests PASS en Node 22.23.3, 24.21.0 y 25.9.0. |
+| Typecheck de paquete, tests y ejemplos | PASS; tipos del paquete también comprobados en Node 22 y 24. Los tres errores `.not` reportados no se reprodujeron antes ni después de este bloque; no se eliminan assertions ni se excluyen tests del typecheck. |
 | Build ESM y declaraciones | PASS. No se editaron archivos dist manualmente. |
 | Consumidor de declaraciones públicas | PASS. |
-| Imports ESM y require de ESM | PASS en el artefacto y en un consumidor instalado, Node 22.23.3 y 25.4.0. |
-| Dos builds y dos npm pack con fuentes LF | Tarballs idénticos byte a byte, 46 archivos, 292453 bytes. |
+| Imports ESM y require de ESM | PASS en el artefacto y en un consumidor temporal instalado, Node 22.23.3, 24.21.0 y 25.9.0; SRI del lockfile confirmado. |
+| Dos builds y dos npm pack con fuentes LF | Tarballs idénticos byte a byte, 46 archivos, 300900 bytes; build con Node 24.21.0. |
 | Lint y formato focal, docs y diff check | PASS. |
-| Suite completa en Windows, Node 25.4.0 | Última corrida: 1144 PASS y 1 SKIP. Corridas anteriores reprodujeron el fallo intermitente del file lock. |
-| Suite completa en Windows, Node 22.23.3 | 1143 PASS, 1 SKIP y 1 FAIL del file lock ya observado en la base original. No es una corrida completamente verde. |
-| Check global de lint y formato | PASS de 130 archivos en clone limpio con LF. El primer checkout con CRLF falló por formato, sin reformatear código ajeno. |
-| Checker original check:exports en Windows | FAIL por import absoluto del CLI. Se verificaron exports y tipos con comandos independientes. |
+| Suite completa en Windows, Node 22.23.3, 24.21.0 y 25.9.0 | Cada versión: 1189 PASS, 1 SKIP y 1 FAIL del file lock ya observado en la base original. No son corridas completamente verdes. |
+| Check global de lint y formato | PASS de 132 archivos en clone con LF, sin reformatear código ajeno. |
+| Checker original check:exports en Windows | FAIL por import absoluto del CLI. Una copia temporal con sólo la conversión a file URL y bloqueo de red verifica todos los exports; PASS en Node 22, 24 y 25, sin cambiar el checker del SDK. |
 
 Integridad del tarball local `facturas-0.20.3-moyan.1.tgz`:
 
 ```text
-sha512-L/8jPYjolHunnzF3Oox66tBG09Gb9f8a/aI8gYw5fcfOnpD2CKsIFY/yLFjK9vNR7aCE9soHjkzA86rLh47JJw==
+sha512-kr75X3xxQ+4C67YOvzcbUwhAt6KnhKmIpTR0TEQezp5OCfsCQ1L6bhl6g8Ka97huptkGoO/QBfpfeWa5D64m/w==
 ```
 
 Esta igualdad se comprobó con las fuentes finales del parche en un clone con LF,
-pnpm 12.4.1 y Node 25.4.0. Los source maps incorporan el contenido fuente y sus
+pnpm 12.4.1 y Node 24.21.0. Los source maps incorporan el contenido fuente y sus
 finales de línea. El primer artefacto construido desde el checkout CRLF tuvo
 otra integridad y no es el artefacto de referencia. No se promete igualdad entre
 toolchains o sistemas operativos distintos sin repetir la comprobación.
@@ -157,7 +180,8 @@ toolchains o sistemas operativos distintos sin repetir la comprobación.
 
 No instales la raíz del monorepo como dependencia Git. Es un workspace privado,
 no el paquete `facturas`. Después de aprobar el parche, fijá el SHA completo de
-su commit, compilá `packages/arca` con el lockfile y generá un tarball:
+su commit, usá Node 24.21.0 y pnpm 12.4.1, compilá `packages/arca` con el lockfile
+y generá un tarball:
 
 ```bash
 git clone -c core.autocrlf=false https://github.com/moyanop/facturas.git
@@ -184,12 +208,15 @@ lockfile y revisar su resolución. Esta sesión no instala ni cambia nada en Moy
 ## Port a upstream y rollback
 
 Para proponerlo después a la rama oficial actual, portá sólo el error público,
-tipos, parser y método estrictos, junto con tests y documentación. Resolvé las
+tipos, parsers y método estrictos y el hook interno mínimo anterior al parseo,
+junto con tests y documentación. Resolvé las
 diferencias del helper de login sobre la nueva base y repetí la matriz y las
 regresiones de autenticación. No envíes la rama histórica completa ni el cambio
 de versión temporal como si fuera una actualización oficial. Prepará el
 changeset correspondiente a la API aditiva en la versión upstream vigente.
 
-El límite de rollback es el método strict, su parser y error públicos, exports,
-tests, verificaciones y documentación. No requiere rollback de WSAA, emisión,
+El límite de rollback es el método strict, sus parsers de estructura y XML,
+error público, exports, hook interno `validateResponse`, tests, verificaciones
+y documentación. El hook sólo se usa en esta consulta; no altera transportes
+legacy sin validador. No requiere rollback de WSAA, emisión,
 reservas, numeración, bases de datos ni de Moyan. H.1B-1 permanece fuera de alcance.

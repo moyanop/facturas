@@ -71,7 +71,11 @@ function has(value: Record<string, unknown>, key: string): boolean {
 }
 
 /** Sólo tolera declaraciones XML y nil explícitamente falso, nunca contenido oculto. */
-function shape(value: unknown, keys: string[], field: string) {
+export function validateStrictSalesPointsShape(
+  value: unknown,
+  keys: string[],
+  field: string
+) {
   const node = record(value, field);
   for (const [key, nested] of Object.entries(node)) {
     if (keys.includes(key)) {
@@ -93,6 +97,8 @@ function shape(value: unknown, keys: string[], field: string) {
   }
   return node;
 }
+
+const shape = validateStrictSalesPointsShape;
 
 function scalar(value: unknown, field: string): unknown {
   if (value !== null && typeof value === "object") {
@@ -389,6 +395,8 @@ export function sanitizeWsfeSalesPointsStrictError(
       field: error.field,
       fieldState: error.fieldState,
       issues: error.issues,
+      originalCode:
+        error.reason === "soap_fault" ? "ARCA_SOAP_FAULT" : undefined,
       providerCode: error.providerCode,
       authenticationReason: error.authenticationReason,
       originService: "wsfe",

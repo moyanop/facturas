@@ -37,6 +37,7 @@ import {
   type WsfeSalesPointsStrictRecovery,
   type WsfeSalesPointsStrictResult,
 } from "./wsfe-sales-points-strict";
+import { readWsfeSalesPointsStrictXml } from "./wsfe-sales-points-strict-xml";
 
 export type {
   WsfeSalesPointStrict,
@@ -412,6 +413,9 @@ export function createWsfeService(
       service: "wsfe",
       operation,
       ...(retries === undefined ? {} : { retries }),
+      ...(preserveEnvelope
+        ? { validateResponse: readWsfeSalesPointsStrictXml }
+        : {}),
       signal: input.abortSignal,
       body: {
         Auth: createWsfeAuth(
@@ -424,7 +428,7 @@ export function createWsfeService(
     });
 
     return preserveEnvelope
-      ? response.result
+      ? readWsfeSalesPointsStrictXml(response.raw)
       : unwrapWsfeOperationEnvelope(operation, response.result);
   }
 
